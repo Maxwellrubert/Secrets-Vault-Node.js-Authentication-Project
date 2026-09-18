@@ -63,14 +63,15 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // Uses DATABASE_URL (e.g. Neon/Render) when present, otherwise falls back to PG_* vars for local dev.
+// A Pool (rather than a single Client) auto-reconnects if the connection drops when Neon's compute sleeps.
 let db;
 if (process.env.DATABASE_URL) {
-  db = new pg.Client({
+  db = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
 } else {
-  db = new pg.Client({
+  db = new pg.Pool({
     user: process.env.PG_USER,
     host: process.env.PG_HOST,
     database: process.env.PG_DATABASE,
@@ -78,9 +79,8 @@ if (process.env.DATABASE_URL) {
     port: process.env.PG_PORT,
   });
 }
-db.connect().catch((err) => {
-  console.error("Database connection failed:", err);
-  process.exit(1);
+db.on("error", (err) => {
+  console.error("Unexpected database error:", err);
 });
 
 app.get("/", (req, res) => {
