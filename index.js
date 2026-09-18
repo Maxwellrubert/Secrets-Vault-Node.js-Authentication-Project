@@ -242,27 +242,10 @@ app.post("/submit", async (req, res) => {
 
   try {
     await db.query("UPDATE users SET secret = $1 WHERE email = $2", [secret, req.user.email]);
-    req.flash("success", "Your secret has been saved.");
     res.redirect("/secrets");
   } catch (err) {
     console.error("Error saving secret:", err);
-    req.flash("error", "Could not save your secret. Please try again.");
     res.redirect("/submit");
-  }
-});
-
-app.post("/submit/delete", async (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.redirect("/login");
-  }
-  try {
-    await db.query("UPDATE users SET secret = NULL WHERE email = $1", [req.user.email]);
-    req.flash("success", "Your secret has been deleted.");
-    res.redirect("/secrets");
-  } catch (err) {
-    console.error("Error deleting secret:", err);
-    req.flash("error", "Could not delete your secret. Please try again.");
-    res.redirect("/secrets");
   }
 });
 
