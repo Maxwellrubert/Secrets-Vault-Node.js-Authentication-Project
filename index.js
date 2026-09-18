@@ -95,6 +95,10 @@ app.get("/register", (req, res) => {
   res.render("register.ejs", { error: req.flash("error") });
 });
 
+app.get("/how-it-works", (req, res) => {
+  res.render("how-it-works.ejs");
+});
+
 app.get("/logout", (req, res) => {
   req.logout(function (err) {
     if (err) {
@@ -347,3 +351,4 @@ passport.deserializeUser(async (email, cb) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
+
