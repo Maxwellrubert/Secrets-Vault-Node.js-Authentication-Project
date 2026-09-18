@@ -13,4 +13,9 @@ body {
   font-size: 2rem;
   color: #fff;
   background-color: #000;
+  padding: 15px 20px;
+  border-radius: 15px;
+  display: inline-block;
+  max-width: 100%;
+  word-wrap: break-word;
 }

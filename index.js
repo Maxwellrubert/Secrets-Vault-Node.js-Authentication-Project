@@ -107,20 +107,29 @@ app.get("/logout", (req, res) => {
 app.get("/secrets", async (req, res) => {
   if (req.isAuthenticated()) {
     try {
-      const result = await db.query("SELECT secret FROM users WHERE email = $1", [
-        req.user.email,
+      const [mySecretResult, communityResult] = await Promise.all([
+        db.query("SELECT secret FROM users WHERE email = $1", [req.user.email]),
+        db.query(
+          "SELECT display_name, secret, created_at FROM users WHERE secret IS NOT NULL AND secret <> '' ORDER BY created_at DESC"
+        ),
       ]);
-      const userSecret = result.rows[0]?.secret;
+      const communitySecrets = communityResult.rows.map((row) => ({
+        ...row,
+        time: timeAgo(row.created_at),
+      }));
       res.render("secrets.ejs", {
         secret:
-          userSecret || "No secret found or You have not submitted one yet.",
+          mySecretResult.rows[0]?.secret ||
+          "No secret found or You have not submitted one yet.",
         displayName: req.user.display_name || "Anonymous",
+        communitySecrets,
       });
     } catch (err) {
-      console.error("Error fetching secret:", err);
+      console.error("Error fetching secrets:", err);
       res.status(500).render("secrets.ejs", {
         secret: "Something went wrong loading your secret.",
         displayName: "Anonymous",
+        communitySecrets: [],
       });
     }
   } else {
@@ -136,25 +145,6 @@ app.get("/submit", function (req, res) {
     res.render("submit.ejs", { error: req.flash("error") });
   } else {
     res.redirect("/login");
-  }
-});
-
-app.get("/community", async (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.redirect("/login");
-  }
-  try {
-    const result = await db.query(
-      "SELECT display_name, secret, created_at FROM users WHERE secret IS NOT NULL AND secret <> '' ORDER BY created_at DESC"
-    );
-    const secrets = result.rows.map((row) => ({
-      ...row,
-      time: timeAgo(row.created_at),
-    }));
-    res.render("community.ejs", { secrets });
-  } catch (err) {
-    console.error("Error fetching community secrets:", err);
-    res.status(500).send("Something went wrong loading community secrets.");
   }
 });
 
