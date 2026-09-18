@@ -120,13 +120,15 @@ Environment variables required at deploy time:
 
 | Variable               | Description                                                 |
 | ---------------------- | ----------------------------------------------------------- |
-| `PG_USER` / `PG_HOST`  | Postgres connection details from your hosting provider      |
+| `DATABASE_URL`         | Single Postgres connection string from your host (e.g. Neon) — preferred over the individual `PG_*` vars |
+| `PG_USER` / `PG_HOST`  | Individual Postgres connection details (fallback if `DATABASE_URL` is not set) |
 | `PG_DATABASE` / `PG_PASSWORD` / `PG_PORT` |                                 |
 | `SESSION_SECRET`       | A long random string for signing session cookies            |
 | `GOOGLE_CLIENT_ID`     | OAuth client ID (see Google Cloud Console)                  |
 | `GOOGLE_CLIENT_SECRET` | OAuth client secret                                         |
 | `GOOGLE_CALLBACK_URL`  | Must be the app's public URL + `/auth/google/secrets` (e.g. `https://your-app.onrender.com/auth/google/secrets`) |
 | `PORT`                 | Provided automatically by the hosting platform              |
+| `NODE_ENV`             | Set `production` so session cookies use `Secure`            |
 
 Remember to add the correct **Authorized redirect URI** to your OAuth client in the [Google Cloud Console](https://console.cloud.google.com/), otherwise Google sign-in will fail after deploying.
 

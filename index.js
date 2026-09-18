@@ -9,15 +9,19 @@ import session from "express-session";
 import env from "dotenv";
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 const saltRounds = 10;
 env.config();
 
+app.set("trust proxy", 1);
 app.use(
   session({
     secret: process.env.SESSION_SECRET,
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+    },
   })
 );
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -26,14 +30,26 @@ app.use(express.static("public"));
 app.use(passport.initialize());
 app.use(passport.session());
 
-const db = new pg.Client({
-  user: process.env.PG_USER,
-  host: process.env.PG_HOST,
-  database: process.env.PG_DATABASE,
-  password: process.env.PG_PASSWORD,
-  port: process.env.PG_PORT,
+// Uses DATABASE_URL (e.g. Neon/Render) when present, otherwise falls back to PG_* vars for local dev.
+let db;
+if (process.env.DATABASE_URL) {
+  db = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+} else {
+  db = new pg.Client({
+    user: process.env.PG_USER,
+    host: process.env.PG_HOST,
+    database: process.env.PG_DATABASE,
+    password: process.env.PG_PASSWORD,
+    port: process.env.PG_PORT,
+  });
+}
+db.connect().catch((err) => {
+  console.error("Database connection failed:", err);
+  process.exit(1);
 });
-db.connect();
 
 app.get("/", (req, res) => {
   res.render("home.ejs");
@@ -50,7 +66,7 @@ app.get("/register", (req, res) => {
 app.get("/logout", (req, res) => {
   req.logout(function (err) {
     if (err) {
-      return next(err);
+      console.error("Error logging out:", err);
     }
     res.redirect("/");
   });
@@ -58,20 +74,20 @@ app.get("/logout", (req, res) => {
 
 app.get("/secrets", async (req, res) => {
   if (req.isAuthenticated()) {
-    //TODO: Update this to pull in the user secret to render in secrets.ejs
-    console.log(req.user);
     try {
       const result = await db.query("SELECT secret FROM users WHERE email = $1", [
         req.user.email,
       ]);
-      const userSecret = result.rows[0].secret;
-      if (userSecret) {
-        res.render("secrets.ejs", { secret: userSecret });
-      } else {
-        res.render("secrets.ejs", { secret: "No secret found or You have not submitted one yet." });
-      }
+      const userSecret = result.rows[0]?.secret;
+      res.render("secrets.ejs", {
+        secret:
+          userSecret || "No secret found or You have not submitted one yet.",
+      });
     } catch (err) {
       console.error("Error fetching secret:", err);
+      res.status(500).render("secrets.ejs", {
+        secret: "Something went wrong loading your secret.",
+      });
     }
   } else {
     res.redirect("/login");
@@ -122,26 +138,25 @@ app.post("/register", async (req, res) => {
     ]);
 
     if (checkResult.rows.length > 0) {
-      res.redirect("/login");
-    } else {
-      bcrypt.hash(password, saltRounds, async (err, hash) => {
-        if (err) {
-          console.error("Error hashing password:", err);
-        } else {
-          const result = await db.query(
-            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
-            [email, hash]
-          );
-          const user = result.rows[0];
-          req.login(user, (err) => {
-            console.log("success");
-            res.redirect("/secrets");
-          });
-        }
-      });
+      return res.redirect("/login");
     }
+
+    const hash = await bcrypt.hash(password, saltRounds);
+    const result = await db.query(
+      "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
+      [email, hash]
+    );
+    const user = result.rows[0];
+    req.login(user, (err) => {
+      if (err) {
+        console.error("Error logging in after register:", err);
+        return res.redirect("/login");
+      }
+      res.redirect("/secrets");
+    });
   } catch (err) {
-    console.log(err);
+    console.error("Error registering user:", err);
+    res.status(500).send("Something went wrong. Please try again.");
   }
 });
 
@@ -149,7 +164,6 @@ app.post("/register", async (req, res) => {
 //Handle the submitted data and add it to the database
 
 app.post("/submit", async (req, res) => {
-  console.log(req.user);
   const secret = req.body.secret;
   try {
     await db.query("UPDATE users SET secret = $1 WHERE email = $2", [secret, req.user.email]);
@@ -174,19 +188,18 @@ passport.use(
           if (err) {
             console.error("Error comparing passwords:", err);
             return cb(err);
+          } else if (valid) {
+            return cb(null, user);
           } else {
-            if (valid) {
-              return cb(null, user);
-            } else {
-              return cb(null, false);
-            }
+            return cb(null, false);
           }
         });
       } else {
-        return cb("User not found");
+        return cb(null, false);
       }
     } catch (err) {
-      console.log(err);
+      console.error("Error in local strategy:", err);
+      return cb(err);
     }
   })
 );
@@ -197,12 +210,13 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:3000/auth/google/secrets",
+      callbackURL:
+        process.env.GOOGLE_CALLBACK_URL ||
+        "http://localhost:3000/auth/google/secrets",
       userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
     },
     async (accessToken, refreshToken, profile, cb) => {
       try {
-        //console.log(profile);
         const result = await db.query("SELECT * FROM users WHERE email = $1", [
           profile.email,
         ]);
@@ -222,11 +236,19 @@ passport.use(
   )
 );
 passport.serializeUser((user, cb) => {
-  cb(null, user);
+  cb(null, user.email);
 });
 
-passport.deserializeUser((user, cb) => {
-  cb(null, user);
+passport.deserializeUser(async (email, cb) => {
+  try {
+    const result = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (result.rows.length === 0) {
+      return cb(null, false);
+    }
+    cb(null, result.rows[0]);
+  } catch (err) {
+    cb(err);
+  }
 });
 
 app.listen(port, () => {
