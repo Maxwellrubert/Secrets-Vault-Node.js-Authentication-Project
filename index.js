@@ -6,12 +6,43 @@ import passport from "passport";
 import { Strategy } from "passport-local";
 import GoogleStrategy from "passport-google-oauth2";
 import session from "express-session";
+import flash from "connect-flash";
 import env from "dotenv";
 
 const app = express();
 const port = process.env.PORT || 3000;
 const saltRounds = 10;
 env.config();
+
+const NAME_ADJECTIVES = ["Silent", "Clever", "Lucky", "Wandering", "Sleepy", "Brave", "Curious", "Cozy", "Nimble", "Mysterious"];
+const NAME_ANIMALS = ["Fox", "Owl", "Panda", "Raccoon", "Deer", "Badger", "Otter", "Wolf", "Rabbit", "Turtle"];
+
+function generateDisplayName() {
+  const adj = NAME_ADJECTIVES[Math.floor(Math.random() * NAME_ADJECTIVES.length)];
+  const animal = NAME_ANIMALS[Math.floor(Math.random() * NAME_ANIMALS.length)];
+  const number = Math.floor(100 + Math.random() * 900);
+  return `${adj}${animal}${number}`;
+}
+
+function timeAgo(dateValue) {
+  const seconds = Math.floor((Date.now() - new Date(dateValue).getTime()) / 1000);
+  if (seconds < 60) return "posted moments ago";
+  const intervals = [
+    { label: "year", seconds: 31536000 },
+    { label: "month", seconds: 2592000 },
+    { label: "week", seconds: 604800 },
+    { label: "day", seconds: 86400 },
+    { label: "hour", seconds: 3600 },
+    { label: "minute", seconds: 60 },
+  ];
+  for (const { label, seconds: secs } of intervals) {
+    const count = Math.floor(seconds / secs);
+    if (count >= 1) {
+      return count === 1 ? `posted 1 ${label} ago` : `posted ${count} ${label}s ago`;
+    }
+  }
+  return "posted moments ago";
+}
 
 app.set("trust proxy", 1);
 app.use(
@@ -25,6 +56,7 @@ app.use(
   })
 );
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(flash());
 app.use(express.static("public"));
 
 app.use(passport.initialize());
@@ -56,11 +88,11 @@ app.get("/", (req, res) => {
 });
 
 app.get("/login", (req, res) => {
-  res.render("login.ejs");
+  res.render("login.ejs", { error: req.flash("error") });
 });
 
 app.get("/register", (req, res) => {
-  res.render("register.ejs");
+  res.render("register.ejs", { error: req.flash("error") });
 });
 
 app.get("/logout", (req, res) => {
@@ -82,11 +114,13 @@ app.get("/secrets", async (req, res) => {
       res.render("secrets.ejs", {
         secret:
           userSecret || "No secret found or You have not submitted one yet.",
+        displayName: req.user.display_name || "Anonymous",
       });
     } catch (err) {
       console.error("Error fetching secret:", err);
       res.status(500).render("secrets.ejs", {
         secret: "Something went wrong loading your secret.",
+        displayName: "Anonymous",
       });
     }
   } else {
@@ -99,9 +133,28 @@ app.get("/secrets", async (req, res) => {
 
 app.get("/submit", function (req, res) {
   if (req.isAuthenticated()) {
-    res.render("submit.ejs");
+    res.render("submit.ejs", { error: req.flash("error") });
   } else {
     res.redirect("/login");
+  }
+});
+
+app.get("/community", async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.redirect("/login");
+  }
+  try {
+    const result = await db.query(
+      "SELECT display_name, secret, created_at FROM users WHERE secret IS NOT NULL AND secret <> '' ORDER BY created_at DESC"
+    );
+    const secrets = result.rows.map((row) => ({
+      ...row,
+      time: timeAgo(row.created_at),
+    }));
+    res.render("community.ejs", { secrets });
+  } catch (err) {
+    console.error("Error fetching community secrets:", err);
+    res.status(500).send("Something went wrong loading community secrets.");
   }
 });
 
@@ -125,12 +178,18 @@ app.post(
   passport.authenticate("local", {
     successRedirect: "/secrets",
     failureRedirect: "/login",
+    failureFlash: true,
   })
 );
 
 app.post("/register", async (req, res) => {
-  const email = req.body.username;
-  const password = req.body.password;
+  const email = req.body.username.trim();
+  const password = req.body.password.trim();
+
+  if (!email || !password) {
+    req.flash("error", "Email and password are required.");
+    return res.redirect("/register");
+  }
 
   try {
     const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [
@@ -138,13 +197,14 @@ app.post("/register", async (req, res) => {
     ]);
 
     if (checkResult.rows.length > 0) {
+      req.flash("error", "An account with this email already exists. Please log in.");
       return res.redirect("/login");
     }
 
     const hash = await bcrypt.hash(password, saltRounds);
     const result = await db.query(
-      "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
-      [email, hash]
+      "INSERT INTO users (email, password, display_name) VALUES ($1, $2, $3) RETURNING *",
+      [email, hash, generateDisplayName()]
     );
     const user = result.rows[0];
     req.login(user, (err) => {
@@ -164,7 +224,13 @@ app.post("/register", async (req, res) => {
 //Handle the submitted data and add it to the database
 
 app.post("/submit", async (req, res) => {
-  const secret = req.body.secret;
+  const secret = req.body.secret.trim();
+
+  if (!secret) {
+    req.flash("error", "Your secret can't be empty.");
+    return res.redirect("/submit");
+  }
+
   try {
     await db.query("UPDATE users SET secret = $1 WHERE email = $2", [secret, req.user.email]);
     res.redirect("/secrets");
@@ -178,24 +244,25 @@ passport.use(
   "local",
   new Strategy(async function verify(username, password, cb) {
     try {
+      const email = username.trim();
       const result = await db.query("SELECT * FROM users WHERE email = $1 ", [
-        username,
+        email,
       ]);
       if (result.rows.length > 0) {
         const user = result.rows[0];
         const storedHashedPassword = user.password;
-        bcrypt.compare(password, storedHashedPassword, (err, valid) => {
+        bcrypt.compare(password.trim(), storedHashedPassword, (err, valid) => {
           if (err) {
             console.error("Error comparing passwords:", err);
             return cb(err);
           } else if (valid) {
             return cb(null, user);
           } else {
-            return cb(null, false);
+            return cb(null, false, { message: "Invalid email or password." });
           }
         });
       } else {
-        return cb(null, false);
+        return cb(null, false, { message: "Invalid email or password." });
       }
     } catch (err) {
       console.error("Error in local strategy:", err);
@@ -222,8 +289,8 @@ passport.use(
         ]);
         if (result.rows.length === 0) {
           const newUser = await db.query(
-            "INSERT INTO users (email, password) VALUES ($1, $2)",
-            [profile.email, profile.id]
+            "INSERT INTO users (email, password, display_name) VALUES ($1, $2, $3)",
+            [profile.email, profile.id, generateDisplayName()]
           );
           return cb(null, newUser.rows[0]);
         } else {

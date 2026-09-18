@@ -1,0 +1,33 @@
+<%- include('partials/header') %>
+
+  <div class="container mt-5">
+    <h1 class="mb-4">Community Secrets</h1>
+    <p class="lead mb-4">Everyone's secrets, shared anonymously.</p>
+
+    <% if (secrets.length === 0) { %>
+      <p>No secrets shared yet. Be the first!</p>
+    <% } else { %>
+      <div class="row">
+        <% secrets.forEach(function (row) { %>
+          <div class="col-md-6 mb-3">
+            <div class="card h-100">
+              <div class="card-body">
+                <p class="card-text secret-text"><%= row.secret %></p>
+                <p class="card-text mt-2">
+                  <small class="text-muted">
+                    <i class="fas fa-user-secret"></i>
+                    From <%= row.display_name %> · <%= row.time %>
+                  </small>
+                </p>
+              </div>
+            </div>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
+
+    <a class="btn btn-light btn-lg" href="/secrets" role="button">Back to My Secret</a>
+    <a class="btn btn-dark btn-lg" href="/submit" role="button">Submit a Secret</a>
+  </div>
+
+  <%- include('partials/footer') %>
