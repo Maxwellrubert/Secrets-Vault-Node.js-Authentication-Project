@@ -117,19 +117,22 @@ app.get("/secrets", async (req, res) => {
         ...row,
         time: timeAgo(row.created_at),
       }));
+      const mySecret = mySecretResult.rows[0]?.secret;
       res.render("secrets.ejs", {
-        secret:
-          mySecretResult.rows[0]?.secret ||
-          "No secret found or You have not submitted one yet.",
+        secret: mySecret || "No secret found or You have not submitted one yet.",
+        hasSecret: Boolean(mySecret),
         displayName: req.user.display_name || "Anonymous",
         communitySecrets,
+        message: req.flash("success"),
       });
     } catch (err) {
       console.error("Error fetching secrets:", err);
       res.status(500).render("secrets.ejs", {
         secret: "Something went wrong loading your secret.",
+        hasSecret: false,
         displayName: "Anonymous",
         communitySecrets: [],
+        message: [],
       });
     }
   } else {
@@ -140,11 +143,27 @@ app.get("/secrets", async (req, res) => {
 //TODO: Add a get route for the submit button
 //Think about how the logic should work with authentication.
 
-app.get("/submit", function (req, res) {
-  if (req.isAuthenticated()) {
-    res.render("submit.ejs", { error: req.flash("error") });
-  } else {
-    res.redirect("/login");
+app.get("/submit", async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.redirect("/login");
+  }
+  try {
+    const result = await db.query("SELECT secret FROM users WHERE email = $1", [
+      req.user.email,
+    ]);
+    const currentSecret = result.rows[0]?.secret || "";
+    res.render("submit.ejs", {
+      error: req.flash("error"),
+      currentSecret,
+      hasSecret: Boolean(currentSecret),
+    });
+  } catch (err) {
+    console.error("Error loading secret for update:", err);
+    res.status(500).render("submit.ejs", {
+      error: ["Something went wrong."],
+      currentSecret: "",
+      hasSecret: false,
+    });
   }
 });
 
@@ -223,10 +242,27 @@ app.post("/submit", async (req, res) => {
 
   try {
     await db.query("UPDATE users SET secret = $1 WHERE email = $2", [secret, req.user.email]);
+    req.flash("success", "Your secret has been saved.");
     res.redirect("/secrets");
   } catch (err) {
     console.error("Error saving secret:", err);
+    req.flash("error", "Could not save your secret. Please try again.");
     res.redirect("/submit");
+  }
+});
+
+app.post("/submit/delete", async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.redirect("/login");
+  }
+  try {
+    await db.query("UPDATE users SET secret = NULL WHERE email = $1", [req.user.email]);
+    req.flash("success", "Your secret has been deleted.");
+    res.redirect("/secrets");
+  } catch (err) {
+    console.error("Error deleting secret:", err);
+    req.flash("error", "Could not delete your secret. Please try again.");
+    res.redirect("/secrets");
   }
 });
 

@@ -13,11 +13,12 @@
     <form action="/submit" method="POST">
 
       <div class="form-group">
-        <input type="text" class="form-control text-center" name="secret" placeholder="What's your secret?" maxlength="200" required>
+        <input type="text" class="form-control text-center" name="secret" placeholder="What's your secret?" maxlength="200" value="<%= currentSecret %>" required>
       </div>
-      <button type="submit" class="btn btn-dark">Submit</button>
+      <button type="submit" class="btn btn-dark"><%= hasSecret ? "Update Secret" : "Submit Secret" %></button>
     </form>
 
+    <a class="btn btn-light btn-lg mt-3" href="/secrets" role="button">Back to My Secret</a>
 
   </div>
 </div>
